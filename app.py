@@ -8,6 +8,18 @@ import gdown
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc
 
+# --- KRİTİK YAMA (PATCH): KERAS SÜRÜM UYUŞMAZLIĞI İÇİN ---
+# Keras 3'ün eklediği ama Keras 2'nin tanımadığı parametreleri temizler
+def fixed_layer_from_config(cls, config):
+    config.pop('quantization_config', None)
+    config.pop('build_config', None)
+    return cls(**config)
+
+# Hata veren katmanlara yamayı uygula
+tf.keras.layers.Dense.from_config = classmethod(fixed_layer_from_config)
+tf.keras.layers.Conv2D.from_config = classmethod(fixed_layer_from_config)
+tf.keras.layers.InputLayer.from_config = classmethod(fixed_layer_from_config)
+
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="Pneumonia Detection", layout="centered")
 st.title("🩺 Zatürre (Pneumonia) Teşhis Sistemi")
@@ -24,12 +36,12 @@ def load_pneumonia_model():
             gdown.download(url, MODEL_PATH, quiet=False)
     
     try:
-        # Keras 3/2 uyumluluğu için compile=False ve safe_mode=False kritik
-        # Render'daki sürüm farklarını bu parametrelerle aşıyoruz
-        model = tf.keras.models.load_model(MODEL_PATH, compile=False, safe_mode=False)
+        # Yama uygulandığı için artık deserialize hatası almamalıyız
+        model = tf.keras.models.load_model(MODEL_PATH, compile=False)
         return model
     except Exception as e:
         st.error(f"Model yüklenirken hata oluştu: {e}")
+        # Alternatif: Eğer hala hata varsa daha geniş bir temizlik denebilir
         return None
 
 # Modeli çalıştır
@@ -44,13 +56,13 @@ def load_metrics():
                 return pickle.load(f)
         except:
             pass
-    return {"auc": 0.95} # Dosya yoksa varsayılan
+    return {"auc": 0.95} 
 
 metrics = load_metrics()
 
 # --- GÖRÜNTÜ ÖN İŞLEME ---
 def prepare_image(img):
-    img = img.convert("RGB") # Renkli formata zorla
+    img = img.convert("RGB")
     img = img.resize((150, 150))
     img_array = np.array(img) / 255.0
     img_array = np.expand_dims(img_array, axis=0)
@@ -71,25 +83,22 @@ if uploaded_file is not None:
     if st.button("🔍 Analiz Et"):
         if model is not None:
             with st.spinner('Yapay zeka analiz ediyor...'):
-                # Tahmin Süreci
                 prepared_img = prepare_image(image)
                 preds = model.predict(prepared_img)
                 pred_prob = float(preds[0][0])
                 
-                # Karar
                 result = "PNEUMONIA (Zatürre Pozitif)" if pred_prob > 0.5 else "NORMAL (Sağlıklı)"
                 color = "red" if pred_prob > 0.5 else "green"
                 
                 st.markdown(f"### Sonuç: :{color}[{result}]")
                 st.write(f"**Tahmin Olasılığı:** %{pred_prob*100:.2f}")
 
-                # --- CANLI ROC GRAFİĞİ ---
+                # --- GÖRSELLEŞTİRME ---
                 st.subheader("Analiz Özeti")
-                # Basit bir görselleştirme
                 fig, ax = plt.subplots()
                 ax.bar(["Zatürre Olasılığı", "Sağlıklı Olasılığı"], [pred_prob, 1-pred_prob], color=[color, 'gray'])
                 ax.set_ylim(0, 1)
                 ax.set_ylabel('Olasılık Skoru')
                 st.pyplot(fig)
         else:
-            st.error("Üzgünüz, model yüklenemediği için şu an işlem yapılamıyor.")
+            st.error("Model yüklenemedi. Lütfen 'requirements.txt' dosyanızda 'tensorflow>=2.16.1' olduğundan emin olun.")
